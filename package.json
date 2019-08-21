@@ -1,0 +1,24 @@
+{
+  "name": "docorganize",
+  "private": true,
+  "license": "Apache-2.0",
+  "files": [
+    "*.js",
+    "resources"
+  ],
+  "author": "Bruce Mcpherson",
+  "engines": {
+    "node": ">=8"
+  },
+  "dependencies": {
+    "@google-cloud/language": "^3.2.5",
+    "@google-cloud/storage": "^3.0.2",
+    "@google-cloud/vision": "^1.1.3",
+    "googleapis": "^42.0.0",
+    "request": "^2.88.0",
+    "string-to-stream": "^2.0.0"
+  },
+  "scripts": {
+    "start": "node language/index.js"
+  }
+}

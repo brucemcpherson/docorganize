@@ -1,0 +1,7 @@
+**/.git
+**/.gitignore
+.dockerignore
+.gcloudignore
+**/*.sh
+**/node_modules
+Dockerfile*
