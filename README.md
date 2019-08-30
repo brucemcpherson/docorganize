@@ -1,3 +1,7 @@
+# Organizing and interpreting google vision text annotation
+
+This uses a bunch of apis to go from an image to a sheet
+
 ## Credentials
 
 You'll need your own private folder to store credentials
@@ -9,22 +13,22 @@ My structure is (not included in the repo)
 
 You can organize it however you normally deal with secrets, but mine is like this.
 
-```
+````javascript
 module.exports = (function(ns) {
   ns.sheets = {
     lv: {
       spreadsheetId: '1exxxxxxxxxxxx8',
-      subject: 'bruce@mcpher.com',
+      subject: 'xxx@example.com',
       serviceAccountFile: './creds/xxxxxxxxxxxxxxx.json',
     },
     pv: {
       spreadsheetId: '1xxxxxxxxxxxxxxxxx8',
-      subject: 'fid@mcpher.com',
+      subject: 'xxx@example.com',
       serviceAccountFile: './creds/xxxxxxxxxx.json',
     },
     kp: {
       spreadsheetId: '1xxxxxxxxxxxxxxxxxx8',
-      subject: 'fid@mcpher.com',
+      subject: 'xxx@example.com',
       serviceAccountFile: './creds/xxxxxxxxxxxx.json',
     },
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
@@ -75,12 +79,30 @@ module.exports = (function(ns) {
 
   return ns;
 })({});
-```
+````
 
 ### Service account impersonation
 
-One of the steps here is to create a sheet of the results. To use the Sheets API you'll need to impersonate a user with approriate credentials and project settings. If you are doing the sheets part, you'll need to read http://ramblings.mcpher.com/Home/excelquirks/vuejs-and-apollo-graphql/google-cloud-platform/sheesapiimpersonate to see exactly how.
+One of the steps here is to create a sheet of the results. To use the Sheets API you'll need to impersonate a user with approriate credentials and project settings. If you are doing the sheets part, you'll need to read <http://ramblings.mcpher.com/Home/excelquirks/vuejs-and-apollo-graphql/google-cloud-platform/sheesapiimpersonate> to see exactly how.
 
 ## RunMode
 
 You'll see this mentioned in various places. This is so I can use different secrets for prod/dev etc and it maps to various properties in the visecrets file
+
+## Starting
+
+- Use yarn or npm to install package.json dependencies
+- Sort out cloud console project, get creds and set up visecrets
+- load a pdf file to cloud storage
+
+To ocr and analyze - put the storage path name in languageorchestrate
+
+````bash
+yarn start
+````
+
+To write the result to sheets - put the storage path name in sheetsorchestrate
+
+````bash
+yarn tosheets
+````

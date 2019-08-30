@@ -1,7 +1,7 @@
 const secrets = require('../private/visecrets');
 const vision = require('@google-cloud/vision').v1;
 
-// Creates a client
+// does the vision annotation
 let client = null;
 const init = ({ mode }) => {
   client =  new vision.ImageAnnotatorClient({
@@ -31,6 +31,7 @@ const start = async ({gcsSourceUri, gcsContentUri}) => {
     ]
   };
   // OCR it
+  console.log('starting ', features, ' on ', inputConfig, ' to ', outputConfig);
   const [operation] = await client.asyncBatchAnnotateFiles(request);
   const [filesResponse] = await operation.promise();
   const destinationUri =

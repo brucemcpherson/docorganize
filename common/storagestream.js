@@ -56,7 +56,7 @@ const getFiles = async ({gcsUri, mode}) => {
   [files] = await bucket.getFiles(options);
   return files;
 };
-
+// the contents of all the files in a folder
 const getFilesContents = ({gcsUri, mode}) =>
   getFiles({gcsUri, mode}).then(files =>
     Promise.all(
@@ -148,7 +148,6 @@ const downloadFile = async ({url, stream, mimeType}) => {
     // request the video files
     console.debug('requesting download from', url);
 
-    // request(url)
     request
       .get(url)
       .on('error', err => reject(err))

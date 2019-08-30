@@ -1,22 +1,43 @@
 const storageStream = require('../common/storagestream');
 const kgSearch = require('../common/kgsearch');
-const {joinCellTexts, joinSymbols, isNumeric} = require('../common/viutils');
+const {joinCellTexts, joinSymbols} = require('../common/viutils');
+const {clues} = require('../private/visecrets');
 
+const {
+  checkPhoneNumber,
+  joinPersonName,
+  checkProfession,
+  checkCompany,
+  getFuseProfession,
+  getFuseCompany,
+  checkEmail,
+  checkDate,
+} = require('../common/vihandlers');
+const buildLookups = require('../common/buildlookups');
+let lookups = null;
+
+// this does all the text fiddling and is the most complex area
 const getContents = async ({gcsTextUri, mode}) =>
   await storageStream.getFilesContents({
     gcsUri: gcsTextUri,
     mode,
   });
 
+// write the final result to storage
 const writeResult = async ({data, gcsDataUri, mode}) =>
   storageStream.streamContent({name: gcsDataUri, content: data, mode});
 
+// get creds for knowledge graph search
+// note that an api key is needed
 const init = ({mode}) => {
   kgSearch.init({mode});
+  buildLookups.init({mode});
+  lookups = buildLookups.start({mode});
 };
 
-const start = ({contents}) => {
-  // flatten everythign
+// entry point
+const start = async ({contents, defaultCountry}) => {
+  // flatten everything - the vision API content is convoluted
   const cells = makeCells({contents});
 
   // now cluster these into rows
@@ -25,32 +46,69 @@ const start = ({contents}) => {
   // now cluster the rows into columns, for tabular presentation if needed
   const columns = clusterColumns({cells});
 
-  // now we have decided how many columns, lets allocate them
+  // now we have decided how many columns, lets allocate them to actuall cells
   allocateColumns({columns, rows});
 
   // now attach row and column numbers to the final result
   const attachedNumbers = attachNumbers({cells, rows, columns});
 
-  // finally clean up the text
-  const cleanCells = clean({cells: attachedNumbers});
+  // we need the result of lookups
+  const [professionLookups, companyLookups] = await lookups;
+  const fuseProfession = getFuseProfession({professionLookups});
+  const fuseCompany = getFuseCompany({ companyLookups });
+
+  // finally clean up the text for use in the natrual language api
+  const cleanCells = clean({
+    cells: attachedNumbers,
+    defaultCountry,
+    fuseProfession,
+    fuseCompany,
+  });
+
   return cleanCells;
 };
 
 // just get rid of white space/punctuation/join numbers etc.
-const clean = ({cells}) => {
+const clean = ({cells, defaultCountry, fuseProfession, fuseCompany}) => {
   return cells.map(cell => {
-    cell.cleanText = joinCellTexts({cell})
+    const s = joinCellTexts({cell})
       .trim()
-      .replace(/\s?['":]\s?/g, '')
+      .replace(/\s?['"]\s?/g, '')
       .replace(/\.$/, ' ')
-      .replace(/[-,_\*]/g, ' ')
+      .replace(/[,_\*]/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
-    // special treatment for numbers of a certain length - lets assume they are phone numbers
-    // natural language processing has troubles with spaces in nymbers
-    const spaceless = cell.cleanText.replace(/\s/g, '');
-    if (spaceless.length > 7 && isNumeric(spaceless))
-      cell.cleanText = spaceless;
+    // now get rid of anything thats just clearly noise
+    cell.cleanText = clues.nonsense.some(f => s.match(f)) ? '' : s;
+
+    // do any noise trimming
+    clues.trim.forEach(f => cell.cleanText = cell.cleanText.replace(f, ''));
+    
+    // best checks on content
+    const phone = checkPhoneNumber({text: cell.cleanText, defaultCountry});
+    const person = joinPersonName({text: cell.cleanText});
+    const profession = checkProfession({text: cell.cleanText, fuseProfession});
+    const company = checkCompany({text: cell.cleanText, fuseCompany});
+    const email = checkEmail({text: cell.cleanText});
+    const dt = checkDate({text: cell.cleanText});
+    cell.clues = {
+      mobile:
+        phone.valid && phone.type === 'mobile'
+          ? {...phone, embellished: phone.number.international}
+          : null,
+      phone: phone.valid
+        ? {...phone, embellished: phone.number.international}
+        : null,
+      person: person.likely ? {...person, embellished: person.joined} : null,
+      profession: profession.valid
+        ? {...profession, embellished: profession.searches[0].item.name}
+        : null,
+      email: email.valid ? {...email, embellished: email.text} : null,
+      date: dt.valid ? {...dt, embellished: dt.iso} : null,
+      company: company.valid
+        ? {...company, embellished: company.searches[0].item.name}
+        : null,
+    };
     return cell;
   });
 };
@@ -64,10 +122,11 @@ const getMids = async ({assignedEntities}) => {
     if (mid && p.indexOf(mid) === -1) p.push(mid);
     return p;
   }, []);
-  // TODO - is there a max to the number of mids at once - do we need to chunk this?
+  // TODO - check - is there a max to the number of mids at once - do we need to chunk this?
   // now we've collected all known mids, attack the knowledge graph
+
   const kg = await kgSearch.search({mids});
-  const midItems = kg.data.itemListElement;
+  const midItems = (kg && kg.data.itemListElement) || [];
 
   // so now we have data from knowledge graph
   return assignedEntities.map(cell => {
@@ -84,37 +143,11 @@ const getMids = async ({assignedEntities}) => {
   });
 };
 
-// figure out the most likely column types
-const attachColumnTypes = ({assignedMids}) => {
-  return Array.from(Array(
-    assignedMids.reduce((p, c) => Math.max(c.columnNumber + 1, p), 0)
-  )).map(f => [])
-    .map((header, columnNumber) => {
-      assignedMids
-        .filter(cell => cell.columnNumber === columnNumber)
-        .forEach(cell => {
-          const entityType = cell.entity && cell.entity.type;
-          if (entityType) {
-            let type = header.find(t => t.type === entityType);
-            if (!type) {
-              type = {
-                type: entityType,
-                count: 0,
-              };
-              header.push(type);
-            }
-            type.count++;
-          }
-        });
-      return header;
-    });
-};
-
 // assign entities where they were classified
+// the entity analysis is disassociated from the original text - have to find it again in the original
 const assignEntities = ({cleanCells, entities}) => {
   entities.forEach(entity => {
     // reassociate with each mention
-    console.log(JSON.stringify(entity));
     cleanCells.forEach(cell => {
       if (entity.name === cell.cleanText) {
         const {metadata, type} = entity;
@@ -129,7 +162,7 @@ const assignEntities = ({cleanCells, entities}) => {
 };
 
 // sometimes we get a separator that should be used as if it were a sure_space
-const PROXY_BREAKS = ['|', ':'];
+const PROXY_BREAKS = ['|', ':', '>'];
 // this means we can get rid of any proxy's from the text
 const PROXY_DISPOSE = true;
 // this gets rid of any text thats just blanks
@@ -199,6 +232,11 @@ const makeCells = ({contents}) => {
               // intialize a new cell if needed
               cell = cell || {
                 texts: [],
+                sourceLocation: {
+                  pageIndex,
+                  blockIndex,
+                  paragraphIndex,
+                },
               };
               // register this one
               let cleaned = text;
@@ -215,7 +253,7 @@ const makeCells = ({contents}) => {
                   separator: breaks[0] === 'SPACE' ? ' ' : '',
                 });
               }
-              // console.log(joinCellTexts({ cell }), breaks);
+
               // if its the end of a cell then record this as a completed cell
               if (
                 breaks.find(
@@ -381,6 +419,7 @@ const attachNumbers = ({cells, rows, columns}) => {
     // this will happen if the data could not be allocated to any column
     cell.columnNumber =
       cell.columnId === -1 ? cell.columnId : cls[cell.columnId];
+    cell.id = cell.rowId * 10000 + cell.columnId;
     return cell;
   });
 };
@@ -433,81 +472,6 @@ const clusterColumns = ({cells}) => {
       })
   );
 };
-// try to split the thing into rows
-const makeRows = ({contents, layout}) => {
-  const {bbs, centers} = layout;
-  return contents.reduce((lines, file, fileIndex) => {
-    const {name, content} = file;
-    console.log('....adding text from', name);
-    content.responses.forEach((f, index) => {
-      const pageIndex = index + fileIndex * 1000;
-      const {pages} = f.fullTextAnnotation;
-      pages.forEach((c, pIndex) => {
-        c.blocks.forEach((f, blockIndex) => {
-          if (f.blockType === 'TEXT') {
-            f.paragraphs.forEach((g, paragraphIndex) => {
-              const {words} = g;
-              words.forEach((h, wordIndex, arr) => {
-                const key = `${pageIndex}-${pIndex}-${blockIndex}-${paragraphIndex}-${wordIndex}`;
-                // symbols are letter by letter so join them
-                const text = joinSymbols({word: h});
-                // well use these later to distinguish breaks in the data from spaces
-                // note that there can be special chars to force breaks too like |
-                const nexth = wordIndex < arr.length - 1 && arr[wordIndex + 1];
-                const breaks = h.symbols
-                  .map(
-                    h =>
-                      h.property &&
-                      h.property.detectedBreak &&
-                      h.property.detectedBreak.type
-                  )
-                  .filter(h => h);
-                // this is a character forced sure space
-                if (
-                  !breaks.length &&
-                  nexth &&
-                  PROXY_BREAKS.indexOf(nexth.symbols[0].text) !== -1
-                ) {
-                  breaks.push('SURE_SPACE');
-                }
-
-                // this will bring up the dimensions for bb for this row.
-                const center = centers.find(t => t.keys.indexOf(key) !== -1);
-                if (!center) {
-                  console.log('couldnt find center for ', key);
-                  throw new error('oops');
-                }
-
-                const bb = bbs[key];
-                if (!bb) {
-                  console.log('couldnt find bb for ', key);
-                  throw new error('boops');
-                }
-                const row = center.name;
-
-                // if we dont know this row, add it
-                if (!lines[row]) {
-                  lines[row] = {
-                    row,
-                    words: [],
-                    pageIndex,
-                    center,
-                  };
-                }
-                lines[row].words.push({
-                  text,
-                  breaks,
-                  bb,
-                });
-              });
-            });
-          }
-        });
-      });
-    });
-    return lines;
-  }, {});
-};
 
 const makeUbox = ({nv, parabb}) => {
   // this is the raw bb of the word nv (normalized vertices)
@@ -530,7 +494,6 @@ const makeUbox = ({nv, parabb}) => {
     },
   };
   // but we'll use the paragraph x co-ordinates to line those in the same paragraph up
-
   const pbox = {
     topLeft: {
       x: parabb ? parabb.raw.topLeft.x : nv[0].x,
@@ -556,7 +519,7 @@ const makeUbox = ({nv, parabb}) => {
   const {topLeft: pTopLeft} = pbox;
   const {topLeft, topRight, bottomLeft, bottomRight} = raw;
   // there's a mixture of paragraph and raw here on purpose.
-  // use the paragraph left edge for all left dimensions
+  // use the paragraph left edge for left dimensions
   const ubox = {
     topLeft: {
       x: Math.min(pTopLeft.x, topLeft.x),
@@ -601,52 +564,6 @@ const makeUbox = ({nv, parabb}) => {
   };
 };
 
-// this will adjust the bb to account for the new item to be added
-const addcenter = ({bb, center}) => {
-  // clone the given bb if new
-  if (!center.bb) {
-    center.bb = JSON.parse(JSON.stringify(bb));
-  }
-
-  center.count++;
-  // adjust the ubox dimensions caused by the addition of this box
-  const {ubox: bu} = bb;
-  const {ubox} = center.bb;
-
-  ubox.topLeft = {
-    x: Math.min(ubox.topLeft.x, bu.topLeft.x),
-    y: Math.min(ubox.topLeft.y, bu.topLeft.y),
-  };
-  ubox.topRight = {
-    x: Math.max(ubox.topRight.x, bu.topRight.x),
-    y: Math.min(ubox.topRight.y, bu.topRight.y),
-  };
-  ubox.bottomRight = {
-    x: Math.max(ubox.bottomRight.x, bu.bottomRight.x),
-    y: Math.max(ubox.bottomRight.y, bu.bottomRight.y),
-  };
-  ubox.bottomLeft = {
-    x: Math.min(ubox.bottomLeft.x, bu.bottomLeft.x),
-    y: Math.max(ubox.bottomLeft.y, bu.bottomLeft.y),
-  };
-  ubox.width = ubox.topRight.x - ubox.topLeft.x;
-  ubox.height = ubox.bottomRight.y - ubox.topRight.y;
-  ubox.center = {
-    top: {
-      x: ubox.topLeft.x + ubox.width / 2,
-      y: ubox.topLeft.y,
-    },
-    middle: {
-      x: ubox.topLeft.x + ubox.width / 2,
-      y: ubox.topLeft.y + ubox.height / 2,
-    },
-    bottom: {
-      x: ubox.bottomLeft.x + ubox.width / 2,
-      y: ubox.bottomLeft.y,
-    },
-  };
-  return center;
-};
 const makebb = ({
   nv,
   pageIndex,
@@ -657,7 +574,6 @@ const makebb = ({
   parabb,
   key,
 }) => {
-  // a proper rectangle around it as it could be a trapezium
   // so we need to fiddle with the bb box to unskew it
   const ubox = makeUbox({nv, parabb});
   return {
@@ -677,7 +593,6 @@ module.exports = {
   getContents,
   clean,
   assignEntities,
-  attachColumnTypes,
   writeResult,
   getMids,
   init,

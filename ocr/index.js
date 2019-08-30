@@ -1,6 +1,6 @@
 const argv = require('yargs').argv;
-const languageServer = require('./languageserver');
-languageServer.init({
+const ocrServer = require('./ocrserver');
+ocrServer.init({
   mode: process.env.FIDRUNMODE || 'pv',
   argv
 });

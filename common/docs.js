@@ -2,12 +2,12 @@ const {google} = require('googleapis');
 const {
   getSheetCreds,
   getSheetSubject,
-  getSheetScopes,
+  getDocScopes,
 } = require('../private/visecrets');
-const {rangeMaker, till} = require('../common/viutils');
+const {till} = require('./viutils');
 
 const mode = 'lv';
-let sheetClient = null;
+let docClient = null;
 
 /**
  * returns an authorized sheet client
@@ -21,21 +21,21 @@ const init = async ({mode}) => {
     credentials.client_email,
     null,
     credentials.private_key,
-    getSheetScopes(),
+    getDocScopes(),
     subject
   );
 
   // validate and authorize the jwt
-  const { error } = await till(auth.authorize());
+  const {error} = await till(auth.authorize());
   if (!error) {
     console.log(
-      `....service account ready to access sheets on behalf of ${subject}`
+      `....service account ready to access docs on behalf of ${subject}`
     );
-    sheetClient = google.sheets({
-      version: 'v4',
+    docClient = google.docs({
+      version: 'v1',
       auth,
     });
-    return sheetClient;
+    return docClient;
   } else {
     console.error(error);
   }
@@ -65,7 +65,7 @@ const addValues = ({spreadsheet, sheet, values, rowOffset, columnOffset}) => {
     },
   };
   console.log('...adding values to ', range);
-  return sheetClient.spreadsheets.values.batchUpdate(request);
+  return docClient.spreadsheets.values.batchUpdate(request);
 };
 /*
  * clear the whole sheet
@@ -80,7 +80,7 @@ const clearSheet = ({spreadsheet, sheet}) => {
     rows,
     columns,
   })}`;
-  return sheetClient.spreadsheets.values.clear({
+  return docClient.spreadsheets.values.clear({
     range,
     spreadsheetId,
   });
@@ -90,7 +90,7 @@ const clearSheet = ({spreadsheet, sheet}) => {
  * get basic info on a spreadsheet
  */
 const getSpreadsheet = ({spreadsheetId}) => {
-  return sheetClient.spreadsheets.get({
+  return docClient.spreadsheets.get({
     spreadsheetId,
     fields: 'spreadsheetId,properties.title,sheets.properties',
   });
@@ -115,30 +115,27 @@ const createSheet = ({title, spreadsheet}) => {
     },
   };
   console.log('...creating new sheet ', title);
-  return sheetClient.spreadsheets.batchUpdate(request);
+  return docClient.spreadsheets.batchUpdate(request);
 };
 /*
- * create an empty spreadsheet
+ * create an empty document
  */
-const createSpreadsheet = async ({title, mode}) => {
+const createDocument = async ({title}) => {
   const request = {
-    fields: 'spreadsheetId',
+    fields: 'documentId',
     resource: {
-      properties: {
-        title,
-      },
+      title,
     },
   };
-  console.log('...creating new spreadsheet ', title);
-  return sheetClient.spreadsheets.create(request);
+  console.log('...creating new document ', title);
+  return docClient.documents.create(request);
 };
-
 
 module.exports = {
   init,
   createSheet,
   addValues,
-  createSpreadsheet,
+  createDocument,
   getSpreadsheet,
   clearSheet,
 };

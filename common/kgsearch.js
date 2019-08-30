@@ -1,7 +1,5 @@
 const {google} = require('googleapis');
 const {getGcpCreds, getKgScopes} = require('../private/visecrets');
-const till = waitingFor =>
-  waitingFor.then(result => ({result})).catch(error => ({error}));
 
 let kgClient = null;
 /**
@@ -18,9 +16,9 @@ const init = ({mode}) => {
 };
 
 const search = ({mids}) => {
-  return kgClient.entities.search({
+  return mids && mids.length ? kgClient.entities.search({
     ids: mids,
-  });
+  }) : null;
 };
 /**
  * use it like this
@@ -34,7 +32,7 @@ const test = async () => {
   // make up some data
   const mids = ['/m/01bw9x', '/m/0ch6mp2'];
   const result = await search({ mids });
-  // 
+  //
   console.log(JSON.stringify(result.data.itemListElement));
 };
 
