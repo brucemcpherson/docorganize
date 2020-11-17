@@ -83,7 +83,7 @@ module.exports = (function(ns) {
 
 ### Service account impersonation
 
-One of the steps here is to create a sheet of the results. To use the Sheets API you'll need to impersonate a user with approriate credentials and project settings. If you are doing the sheets part, you'll need to read <http://ramblings.mcpher.com/Home/excelquirks/vuejs-and-apollo-graphql/google-cloud-platform/sheesapiimpersonate> to see exactly how.
+One of the steps here is to create a sheet of the results. To use the Sheets API you'll need to impersonate a user with approriate credentials and project settings. If you are doing the sheets part, you'll need to read <https://ramblings.mcpher.com/google-cloud-platform/service-account-impersonation-for-google-apis-with-nodejs-client/> to see exactly how.
 
 ## RunMode
 
